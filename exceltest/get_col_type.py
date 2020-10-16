@@ -7,7 +7,7 @@ import os
 class colType:
 
     def __init__(self):
-        #self.filename = sys.argv[1]
+        # self.filename = sys.argv[1]
         #path = os.path.dirname(self.filename)
         #name = os.path.basename(self.filename).split('.')[0]
         #self.model_name = path +"/"+ name + '_模型.xlsx'
@@ -18,6 +18,7 @@ class colType:
         self.match_type = {'varcahr2': 'varchar',
                            'varcahr': 'varchar',
                            'varchar': 'varchar',
+                           'varuchar': 'varchar',
                            'varchar2': 'varchar',
                            'character': 'varchar',
                            'character varying': 'varchar',
@@ -31,6 +32,7 @@ class colType:
             'decimal(17)': 'varchar(17)',
             'varchar2':'string',
             'char':'string',
+            'varchar':'string',
             'date':'varchar(10)'
         }
         ## bigint 的key是我自己加的
@@ -142,31 +144,19 @@ class colType:
             # todo
             decimal = re.search("\d+\,", type_name)
             # print("type_name="+str(decimal))
-            if pre_str.startswith("decimal"):
-                # print('pre_str =%s typename=%s' % (pre_str, type_name))
-                # if type_name == 'decimal(17)':
-                #     data_type = 'varchar(17)'
-                # else:
-                #     # newname = re.sub('\)', ',2)', type_name)
-                data_type = "decimal(20,2)"
-            elif pre_str == 'clob':
+            # if pre_str.startswith("decimal"):
+            #     # print('pre_str =%s typename=%s' % (pre_str, type_name))
+            #     # if type_name == 'decimal(17)':
+            #     #     data_type = 'varchar(17)'
+            #     # else:
+            #     #     # newname = re.sub('\)', ',2)', type_name)
+            #     data_type = "decimal(20,2)"
+            if pre_str == 'clob':
                 data_type="string"
                 # print("cols_mapping_rule clob "+data_type)
             elif decimal:
                 # print(decimal)
-                all_num = re.findall("\d+", type_name)
-                # print(all_num)
-                all_len=len(all_num)
-                if all_len ==2 :
-                    # print("decimal all_num="+all_num[1])
-                    ## 字符串0和数字0 不一样
-                    if all_num[1] =='0':
-                        data_type="bigint"
-                        # print("data_type bigint")
-                    else :
-                        data_type = type_name.replace(pre_str, "decimal")
-                else :
-                    data_type = type_name.replace(pre_str, "decimal")
+                data_type = self.check_data_type_number(pre_str, type_name)
             else:
                 data_type = "bigint"
             # print( "num match %s，%s => %s" %(pre_str,type_name,data_type))
@@ -177,6 +167,39 @@ class colType:
             data_type=type_name
 
         return data_type
+    '''
+        1 处理 decimal 类型的问题 decimal(12,0) -> bigint 
+        1 处理 decimal 类型的问题 decimal(12,8) -> decimal(12,8) 
+        1 处理 decimal 类型的问题 decimal(18,2) -> decimal(20,2) 
+    '''
+    def check_data_type_number(self, pre_str, type_name):
+        all_num = re.findall("\d+", type_name)
+        # print(all_num)
+        all_len = len(all_num)
+        if all_len == 2:
+            # print("decimal all_num="+all_num[1])
+            ## 字符串0和数字0 不一样
+            if pre_str.startswith('decimal'):
+                if all_num[1] == '0':
+                    data_type = "bigint"
+                    # print("data_type bigint")
+                elif int(all_num[1]) <= 2:
+                    data_type='decimal(20,2)'
+                else:
+                    data_type = type_name.replace(pre_str, "decimal")
+            else :
+                if all_num[1] == '0':
+                    data_type = "bigint"
+                else:
+                    data_type = type_name.replace(pre_str, "decimal")
+
+        else:
+            if all_len==1 and pre_str.startswith('decimal'):
+                data_type='bigint'
+            else :
+                data_type = type_name.replace(pre_str, "decimal")
+        return data_type
+
     '''
     # 1 看数据项格式是否是含有括号的格式 如 varchar(20),有就截取前面的部分作为前缀 前缀最后是要替换的
     # 2 如果不含括号，也可能带有数字，需要我们自己手动加括号
@@ -251,14 +274,15 @@ class colType:
 
         return type_name.strip()
 
-    def get_config_file_source(self):
+    def get_config_file_source(self,model_name,cols_target_name):
         # 读取配置文件
-        basefilename = "e://files/types.xlsx"
-        print("get_interface_index_source 打开" + basefilename)
-        data = xlrd.open_workbook(basefilename)
+        # basefilename = "e://files/types.xlsx"
+        print("get_interface_index_source 打开" + model_name)
+        data = xlrd.open_workbook(model_name)
         # 通过索引获取，例如打开第一个sheet表格
         #table = data.sheet_by_name("接口目录")
-        table = data.sheet_by_index(0)
+        # table = data.sheet_by_index(0)
+        table = data.sheet_by_name('接口明细-非贴源')
         allrows = 0
         col_dict={}
         all_type_set=set()
@@ -266,7 +290,9 @@ class colType:
             allrows = table.nrows  # 获取该sheet中的有效行数
             for rowindex in range(1, allrows):
                 cells = table.row_values(rowindex)
-                type_name = cells[0].strip().lower()
+                type_name = cells[9].strip().lower()
+                if type_name == 'decimal':
+                    print(type_name)
                 # #print(type_name) 替换中文的括号,替换掉空括号
                 # type_name=type_name.replace('（','(').replace('）',')').replace('()','').replace("，",",")
                 # if not type_name or type_name=='none':
@@ -286,13 +312,15 @@ class colType:
                 #     #     print("find ="+type_name)
                 #     all_type.append(type_name)
                 new_type_name = self.check_columns_to_right_rule(type_name, all_type_set)
+                # if new_type_name =='varchar':
+                #     print('varchar='+new_type_name)
                 if new_type_name :
                     ## 开始处理 type_name
                     self.columns_mapping_proc(new_type_name,col_dict)
                 # else :
                 #     print("type_name 为空串")
         headings=['GP数据项类型','HIVE_数据项类型','mark']
-        worksheet,wb = self.create_fail_model_excel_xlsx("e://files/gp_hive_mapping.xlsx", 'mapping', headings)
+        worksheet,wb = self.create_fail_model_excel_xlsx(cols_target_name, 'mapping', headings)
         sequence=2
         for val in col_dict.items():
             # print(key+" = "+value)
@@ -324,24 +352,26 @@ class colType:
     def main(self):
         # 读取配置文件
         # type_num_dic["test"]="1"
-        self.get_config_file_source()
-        print("main 执行完成！！！")
+        self.get_config_file_source(filename,target_name)
+        print("main 执行完成！！！,写入到文件 "+target_name)
 
 
 # 判断输入参数
 def judge_input_parameters_num():
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         print("请输入正确的是参数： aotu_generate_model_config_file.py configuration_files")
-        #sys.exit(1)
+        sys.exit(1)
 
 
 if __name__ == '__main__':
-    #judge_input_parameters_num()
     #分割字符串比查找好，查找如果找不到，返回空数组
     # print(re.split("\d+", "decimal", 1))
     #print(re.findall("\D+", "2344"))
+    judge_input_parameters_num()
     aotu = colType()
     type_num_dic={}
+    filename = sys.argv[1]
+    target_name = sys.argv[2]
     aotu.main()
     print(type_num_dic)
     # print(re.findall("([a-z]+)(\,)","hello,(234,23)"))

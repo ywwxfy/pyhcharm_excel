@@ -19,16 +19,18 @@ class AotuGenerate:
 
     def __init__(self):
         self.filename = sys.argv[1]
-        path = os.path.dirname(self.filename)
-        name = os.path.basename(self.filename).split('.')[0]
-        self.model_name = path +"/"+ name + '_模型.xlsx'
+        self.model_name = sys.argv[2]
+        self.failed_match_model_name = sys.argv[3]
+        self.source_flag = sys.argv[4]
+        # path = os.path.dirname(self.filename)
+        # name = os.path.basename(self.filename).split('.')[0]
         #self.basename="e://files/model-test.xlsx"
         self.basename=self.filename
-        self.data_item_name = path + name + '_数据项.xls'
-        self.sql_name = path + name + '_执行sql.xlsx'
+        # self.data_item_name = path + name + '_数据项.xls'
+        # self.sql_name = path +'/'+ name + '_执行sql.xlsx'
         self.all_info = None
         self.interface_dic = {}
-        self.db_columns_type = {}
+        # self.db_columns_type = {}
         #numberic格式映射
         # NUMERIC(20,2) NUMERIC(12)
 
@@ -88,10 +90,10 @@ class AotuGenerate:
                     #保存周期类型,就是清理规则
                     clean_rule = cols[7].strip()
                     #增量 / 全量(每日)，对应到 加载策略要变化，是追加还说覆盖
-                    #todo
+                    #todo 不给默认值
 
                     data_rule = cols[8].strip()
-                    load_rule='追加'
+                    load_rule=''
                     #保存月底数,就是保存多少个月的数据
                     save_mons = cols[9]
                     #保存天数
@@ -110,8 +112,10 @@ class AotuGenerate:
                     forignkey_str=cols[20]
                     ##最后需要生成的 excel 一级主题 二级主题 实体英文简称	实体中文名 加载策略(追加，覆盖) 更新频率 增全量规则 保存周期类型
                     # 是否保存月底数	数据保存天数	备注
-                    t_message=(source_name,'',hive_table,t_ch_name,load_rule,update_frequence,data_rule,clean_rule,save_mons,save_days,mark)
-                    category_info.setdefault(hive_table,t_message)
+                    if hive_table not in category_info:
+                        t_message=(source_name,'',hive_table,t_ch_name,load_rule,update_frequence,data_rule,clean_rule,save_mons,save_days,mark)
+                        category_info.setdefault(hive_table,t_message)
+
             self.interface_dic=category_info
             #print(self.interface_dic)
             print("get_interface_index_source 总共读取excel %d 行，解析到的模型数目为 num=%d 个" %(allrows,len(self.interface_dic)))
@@ -140,7 +144,7 @@ class AotuGenerate:
             i = 1
             all_info = collections.OrderedDict()
             table_index = 1
-            print("----------------读取config begin -----------------------")
+            print("----------------读取 贴源 config begin -----------------------")
             for row_num in range(1, nrows):
                 row_vaule = table.row_values(row_num)
                 #print(row_vaule)
@@ -150,9 +154,11 @@ class AotuGenerate:
                 t_name = row_vaule[1].strip() ##表中文名
                 en_name = row_vaule[2].strip().lower() ##表字段英文名
 
-                ch_name = row_vaule[3] ##表字段中文名
-                if ch_name == 42:
-                    ch_name=''
+                ch_name = row_vaule[3]
+                ##表字段中文名 处理
+                ch_name=self.data_type_rule_exec(ch_name)
+                # if ch_name == 42:
+                #     ch_name=''
                 data_type=row_vaule[4].strip().lower()
                 if hive_table in wrong_table_dict :
                     # print("这张表有问题 hive_table=%s 跳过" %hive_table)
@@ -161,18 +167,10 @@ class AotuGenerate:
                     print ("data_type is empty :hive_table='%s',t_name='%s',col_name='%s'"%(hive_table,t_name,en_name))
                     wrong_table_dict[hive_table]=hive_table
                     continue
-                ## 对错误的 en_name 进行纠正
-                right_data_type = col_type.check_columns_to_right_rule(data_type, all_type_set)
-                if right_data_type:
-                    col_type.columns_mapping_proc(right_data_type, cols_dict)
-                    new_data_type=cols_dict.get(right_data_type)
-                    # print("映射以后的 ="+new_data_type)
-                    if not new_data_type :
-                        print("1 get_config_file_source 未找到对应的映射类型 key='%s' value='%s' " %(data_type,right_data_type))
-                else :
-                    print( "2 get_config_file_source data_type='%s' check_right='%s'" %(data_type,right_data_type) )
-                    new_data_type=right_data_type
-
+                # if data_type =='' :
+                #     print('--------------------------------data_type 是空串')
+                #     continue
+                new_data_type = self.data_type_process(all_type_set, cols_dict, data_type)
 
                 #print(ch_name)
                 pkey = row_vaule[5].strip()
@@ -205,6 +203,37 @@ class AotuGenerate:
             self.all_info = all_info
             print(wrong_table_dict)
             print("****************************** 读取config end*******************")
+    '''
+        调用 数据项纠正方法处理 数据项的问题，得到新的 data_type值
+    '''
+    def data_type_process(self, all_type_set, cols_dict, data_type):
+        ## 对错误的 en_name 进行纠正
+        right_data_type = col_type.check_columns_to_right_rule(data_type, all_type_set)
+        if right_data_type:
+            col_type.columns_mapping_proc(right_data_type, cols_dict)
+            new_data_type = cols_dict.get(right_data_type)
+            # print("映射以后的 ="+new_data_type)
+            if not new_data_type:
+                print("1 get_config_file_source 未找到对应的映射类型 key='%s' value='%s' " % (data_type, right_data_type))
+        else:
+            # print("2 get_config_file_source data_type='%s' check_right='%s'" % (data_type, right_data_type))
+            new_data_type = right_data_type
+        return new_data_type
+
+    def data_type_rule_exec(self,data_type):
+        try :
+            if data_type == 42:
+                data_type = ''
+            elif data_type.startswith('#'):
+                data_type=data_type.replace('#','')
+
+            if data_type== 'N/A':
+                data_type=''
+            # print('old #data_type ='+data_type)
+        except Exception as e :
+            # print(e)
+            return data_type
+        return data_type
 
     '''
         1 读取 接口明细-非贴源 的sheet 页
@@ -212,6 +241,7 @@ class AotuGenerate:
         2 目前只有模型中英文名称和字段，没有原系统来源，需要行方手工梳理，有150多个这样的模型
         3 
     '''
+
     def get_no_source_config_file(self):
         # 读取配置文件
         filename = self.filename
@@ -220,6 +250,14 @@ class AotuGenerate:
         table = data.sheet_by_name('接口明细-非贴源')
         ##那个内容都是5行，每次相当于从下标为6开始
         row_index=1
+        # self.all_info
+        category_dict={}
+        wrong_model_dict={}
+
+        all_type_set=set()
+        cols_dict={}
+        wrong_table_dict={}
+
         if data.sheet_loaded(0):  # 检查某个sheet是否导入完毕
             nrows = table.nrows  # 获取该sheet中的有效行数
             i = 1
@@ -229,8 +267,18 @@ class AotuGenerate:
                 row_vaule = table.row_values(row_num)
                 # print(row_vaule)
                 #hive_db = row_vaule[0].strip().lower()
-                hive_table = row_vaule[0].strip().lower()
+                try :
+                    hive_table = row_vaule[0].strip().lower()
+                except :
+                    # print('exception hive_table ='+str(row_vaule[0]))
+                    hive_table=row_values[0]
                 ch_name = row_vaule[1].strip()
+                ch_name=self.data_type_rule_exec(ch_name)
+                # print(ch_name)
+                # if ch_name.startswith('#'):
+                #     # ch_name=ch_name[1:]
+                #     ch_name=ch_name.replace('#','')
+                    # print("#chname="+ch_name)
                 #if ch_name =='属性名':
                 ##每次都从第一次出现模型名称的row_num 上加5行，开始才是我想要的结果
                 # t_name=''
@@ -240,49 +288,95 @@ class AotuGenerate:
                     t_name_index=row_num+1
                     # print(t_name_index)
                 if row_num == t_name_index:
-                    t_name=row_vaule[2]
-                    print("hive_table=%s t_name=%s" %(hive_table,t_name))
+                    t_ch_name=row_vaule[2]
+                    # print("hive_table=%s t_name=%s" %(hive_table,t_ch_name))
                 if row_num <row_index :
                     # print("跳过第"+str(row_num))
                     continue
 
-                pkey = row_vaule[2].strip()
+                pkey = row_vaule[2].strip().lower().replace('yes','Y').replace('no','N')
                 fkey = row_vaule[3].strip()
                 empty = row_vaule[4]
                 #en_name = re.sub("\s", "",table_name)
                 ch_name2 = row_vaule[5].strip()
                 en_name = row_vaule[6].strip().lower()
-                distribute = row_vaule[7].strip().replace('pi','Y')
+                distribute = row_vaule[7].strip().lower().replace('pi','Y')
                 empty2 = row_vaule[8].strip()
-                data_type = row_vaule[9].strip().lower()
-                source_type = row_vaule[10].strip()
-                app_name = row_vaule[11]
-                mark = row_vaule[12]
+                old_data_type = row_vaule[9].strip().lower()
+                # if hive_table in wrong_model_dict :
+                #     # print("这张表有问题 hive_table=%s 跳过" %hive_table)
+                #     continue
+                # if not old_data_type or old_data_type=='()' or old_data_type=='none' :
+                #     print ("data_type is empty :hive_table='%s',t_name='%s',col_name='%s'"%(hive_table,t_ch_name,en_name))
+                #     wrong_table_dict[hive_table]=hive_table
+                #     # 失败模型的项目
+                #     wrong_model_dict.setdefault(hive_table, en_name)
+                #     continue
+                ##纠正以后的 data_type
+                data_type = self.data_type_process(all_type_set, cols_dict, old_data_type)
+                if data_type=='varchar':
+                    print('data_type=varchar hive_table=%s en_name=%s' %(hive_table,en_name))
+                source_type = row_vaule[10]
+                ## 每一列的字段备注，如仓库中间层，CDMA应用，加工来源
+                col_mark = row_vaule[11]
+                # print("colmark="+col_mark)
+                ## 抽取规则，详细的规则备注，比如每月第一天怎么处理
+
+                fetch_mark = row_vaule[12]
+                if fetch_mark :
+                    if col_mark :
+                        mark=col_mark+";"+fetch_mark
+                    else :
+                        mark=fetch_mark
+                else:
+                    mark=col_mark
+                mark=mark.replace('\n','').replace('\r','')
+                # print("fetch_mark="+fetch_mark)
                 ## 分区字段为Y
-                partition = row_vaule[13].strip()
-                index = row_vaule[14].strip()
-                create_day = row_vaule[15]
-                #一个表一个
-                category_tuple=(app_name,hive_table,ch_name)
+                # partition = row_vaule[13].strip()
+                # index = row_vaule[14].strip()
+                # create_day = row_vaule[15]
+
+                ##最后需要生成的 excel 一级主题 二级主题 实体英文简称	实体中文名 加载策略(追加，覆盖) 更新频率 增全量规则 保存周期类型
+                # 是否保存月底数	数据保存天数	备注
+                # t_message = (source_name, '', hive_table, t_ch_name, load_rule, update_frequence, data_rule, clean_rule, save_mons,
+                if hive_table not in category_dict:
+                    t_message = ('', '', hive_table, t_ch_name, '', '', '', '', '','', mark)
+                    category_dict.setdefault(hive_table, t_message)
+
                 #  col_tuple = (en_name, ch_name, new_data_type, '', pkey, '', '', distribute, '', mark)
                 if not en_name :
                     # print('-----------en_name 不存在,跳过 '+en_name)
+                    # wrong_model_dict.setdefault(hive_table, en_name)
+                    if hive_table not in all_info:
+                        wrong_model_dict.setdefault(hive_table,1)
                     continue
-                row_values=(en_name,ch_name,data_type,'',pkey,'','',distribute,'',mark)
+                if not data_type or data_type=='()':
+                    print('***************%s read  col=%s data_type is  %s' %(hive_table,en_name,data_type))
+                    # row_values = (en_name, ch_name, data_type, '', pkey, '', '', distribute, '', mark)
+                    # print(row_values)
+                    wrong_model_dict.setdefault(hive_table,en_name)
+                    continue
+
                 #字段序号 字段英文名 字段中文名	字段类型 长度 主键否	空值验证 标准代码编号 分布键	分区键 备注
+                row_values=(en_name,ch_name,data_type,'',pkey,'','',distribute,'',mark)
                 if hive_table == '':
                     print("接口明细非贴源 sheet 的hive_table is empty: 跳过 第 " + str(row_num + 1) + " 行")
                 elif hive_table not in all_info:
                     all_info[hive_table] = {'hive_table': hive_table, 'columns': [row_values],
-                                            'table_name': t_name}
+                                            'table_name': t_ch_name}
                 else:
-
                     if en_name not in all_info[hive_table]['columns']:
                         # table_index += 1
                         all_info[hive_table]['columns'].append(row_values)
 
             self.all_info = all_info
-            print(all_info)
+            self.interface_dic=category_dict
+            print("接口目录的模型个数=%d" %len(category_dict))
+            print("接口模型 数据项 data_type 为空的模型个数=%d" %len(wrong_model_dict))
+            print(wrong_model_dict)
+            # print(all_info)
+            print("******************** 读取非贴源sheet 信息完成*************")
 
     # 往 excel 中插入模型和数据项的数据，如果没匹配上的就写一个新的excel
     def insert_model_data(self, workbook,worksheet):
@@ -294,15 +388,23 @@ class AotuGenerate:
 
         iter_info = self.interface_dic
         sequence = 2
-        fail_sequence = 2
-        headings = ['一级主题', '二级主题', '实体英文简称', '实体中文名', '加载策略', '更新频率', '增全量规则', '保存周期类型',
-                    '是否保存月底数', '数据保存天数', '备注']
-        fail_sheet, wb = self.create_fail_model_excel_xlsx("e://files/未匹配到的模型.xlsx", "模型目录", headings)
+
         ##拿到所有的贴源表信息，数组
         columns_array=self.all_info
+        ## 存放未匹配上的模型 hive_table:'',cols[]
+        fail_sheets_list={}
         for hive_table,tuple in iter_info.items():
             #row_values = [hive_table.decode('UTF-8'), table_name, whether, u'事实表', u'公有模型', u'离线']
             row_values=tuple
+            sheet_name=hive_table
+            sheet_len=len(hive_table)
+            if sheet_len>35:
+                sheet_name=hive_table[8:]
+                # print('截取之后的 sheet_name=%s hive_table=%s' % (sheet_name, hive_table))
+            elif sheet_len >31:
+                sheet_name=hive_table[5:]
+                # print('截取之后的 sheet_name=%s hive_table=%s' %(sheet_name,hive_table))
+
             try :
                 table_dic=columns_array[hive_table]
                 columns_values = table_dic["columns"]
@@ -325,7 +427,7 @@ class AotuGenerate:
                 tuple=("描述",'')
                 model_sheet_headings.append(tuple)
 
-                wb_cols,model_sheet = self.create_model_sheet_xlsx(workbook, hive_table, model_sheet_headings)
+                wb_cols,model_sheet = self.create_model_sheet_xlsx(workbook, sheet_name, model_sheet_headings)
                 ##内容格式
                 content_style = wb_cols.add_format()
                 content_style.set_border(1)
@@ -365,13 +467,27 @@ class AotuGenerate:
                 model_sheet.write('L1',"=HYPERLINK(\"#目录索引!a1\",\"返回\")",url_format)
                 sequence += 1
             except Exception as e:
-                #print(" key=%s is　not exists" %hive_table)
+                print(" key=%s is　not exists %s" %(hive_table,str(e)))
                 #print(row_values)
-                fail_sheet.write_row('A' + str(fail_sequence), row_values, categroy_style)
+                # fail_sheets_list.append(row_values)
+                if hive_table not in fail_sheets_list:
+                    fail_sheets_list.setdefault(hive_table,row_values)
+                # fail_sheet.write_row('A' + str(fail_sequence), row_values, categroy_style)
                 #print("失败 %d" %fail_sequence)
+                # fail_sequence += 1
+        print("insert_model_data 总共成功的数目为 num=%d" %(sequence-2))
+        fail_len=len(fail_sheets_list)
+        if fail_len >0:
+            fail_sequence = 2
+            headings = ['一级主题', '二级主题', '实体英文简称', '实体中文名', '加载策略', '更新频率', '增全量规则', '保存周期类型',
+                        '是否保存月底数', '数据保存天数', '备注']
+            fail_sheet, wb = self.create_fail_model_excel_xlsx(failed_match_model_name, "模型目录", headings)
+            for table,rowValue in fail_sheets_list.items():
+                fail_sheet.write_row('A' + str(fail_sequence), rowValue, categroy_style)
                 fail_sequence += 1
-        print("insert_model_data 总共失败的匹配数目为 num=%d" %fail_sequence)
-        wb.close()
+            wb.close()
+        print("insert_model_data 模型数据项和模型目录失败的匹配数目为 num=%d" %fail_len)
+        print('*********** insert_model_data 写入数据完成*************')
 
 
     ##创建第一个变更记录 sheet
@@ -408,22 +524,7 @@ class AotuGenerate:
         worksheet.set_column('H:H', 12)
         worksheet.set_column('I:K', 8.8)
         worksheet.set_column('L:L', 10.88)
-        # 定义一个格式
-        format = {
-            'bold': True,  # 字体加粗
-            'num_format': '$#,##0',  # 货币数字显示样式
-            'align': 'center',  # 水平位置设置：居中
-            'valign': 'vcenter',  # 垂直位置设置，居中
-            'font_size': 12,  # '字体大小设置'
-            'font_name': 'Courier New',  # 字体设置
-            'italic': True,  # 斜体设置
-            'underline': 1,  # 下划线设置 1.单下划线 2.双下划线 33.单一会计下划线 34双重会计下划线
-            'font_color': "red",  # 字体颜色设置
-            'border': 2,  # 边框设置样式1
-            'border_color': 'green',  # 边框颜色
-            'bg_color': '#c7ffec',  # 背景颜色设置
 
-        }
         # style=wb.add_format(format)
         style = wb.add_format()
         style.set_border(1)
@@ -475,10 +576,10 @@ class AotuGenerate:
 
 
     # 创建一个xlsx的excel
-    def create_model_excel_xlsx(self):
+    def create_model_excel_xlsx(self,modelName):
         # 新建一个Excel文件
-        workbook = xlsxwriter.Workbook(self.model_name)
-        print(" create_model_excel_xlsx 最后生成的文档名称："+self.model_name)
+        workbook = xlsxwriter.Workbook(modelName)
+        print(" create_model_excel_xlsx 最后生成的文档名称："+modelName)
         # 新建一个名为model的sheet
         self.create_update_notes_sheet_xlsx(workbook,"变更记录")
         #创建第二个sheet
@@ -487,7 +588,7 @@ class AotuGenerate:
         worksheet.set_row(0,22)
         worksheet.set_column('A:A', 20)
         worksheet.set_column('B:C', 15)
-        worksheet.set_column('C:D', 25)
+        worksheet.set_column('C:D', 30)
         worksheet.set_column('E:K', 8.88)
         # 定义一个格式
         style = workbook.add_format()
@@ -531,15 +632,31 @@ class AotuGenerate:
 
 
     def main(self):
-        # 读取配置文件
-        self.get_no_source_config_file()
-        return
+        global failed_match_model_name
 
-        self.get_config_file_source()
-        ##读取接口目录的配置文件
-        self.get_interface_index_source()
+        source_type = self.source_flag
+        failed_match_model_name=self.failed_match_model_name
+        model_name=self.model_name
+        # 非贴源的表
+        if source_type == 'no_source':
+            # 读取配置文件
+            path = os.path.dirname(failed_match_model_name)
+            name = os.path.basename(failed_match_model_name).split('.')[0]
+            failed_match_model_name=path+'\\'+source_type+'_'+name+'.xlsx'
+            path = os.path.dirname(model_name)
+            name = os.path.basename(model_name).split('.')[0]
+            model_name=path+"\\"+source_type+'_'+name+'.xlsx'
+
+            print('fail_match_model_name=%s target_model_name=%s' %(failed_match_model_name,model_name))
+            self.get_no_source_config_file()
+        else :
+            self.get_config_file_source()
+            ##读取接口目录的配置文件
+            self.get_interface_index_source()
+
         # 生成模板excel
-        self.create_model_excel_xlsx()
+        self.create_model_excel_xlsx(model_name)
+
         # 生成数据项excel
         #self.create_excel_xls()
         # 生成抽取sql
@@ -549,9 +666,13 @@ class AotuGenerate:
 
 # 判断输入参数
 def judge_input_parameters_num():
-    if len(sys.argv) != 2:
-        print("请输入正确的是参数： aotu_generate_model_config_file.py configuration_files")
-        #sys.exit(1)
+    if len(sys.argv) != 5:
+        print(len(sys.argv))
+        print("""
+          请输入正确的是参数： 
+        aotu_generate_model_config_file.py e:\files\model-test.xlsx e:\files\model-test_模型.xlsx e:\files\fail_match_model.xlsx
+        """)
+        sys.exit(1)
 
 
 if __name__ == '__main__':
@@ -559,5 +680,6 @@ if __name__ == '__main__':
     aotu = AotuGenerate()
     # 初始化一个对象，得到col_type
     col_type = get_col_type.colType()
+    failed_match_model_name=''
     # col_type.check_columns_to_right_rule()
     aotu.main()
