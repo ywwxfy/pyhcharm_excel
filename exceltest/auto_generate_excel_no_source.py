@@ -30,6 +30,14 @@ class AotuGenerate:
         # self.sql_name = path +'/'+ name + '_执行sql.xlsx'
         self.all_info = None
         self.interface_dic = {}
+        # p08_load_way 加载模式，有就拿下来，没有就置空,需要问具体的意思
+        # p05_f_table_filt 源表过滤条件，原封不动
+        # p07_table_style 表类型 c:当前 s:切片 l:拉链 原封不动保存
+        # p17_view_key 分布键,暂时不管
+        # p08_key_cols 主键字段集合，逗号分隔开，替换成Y,N，原来的不正确
+        self.jobs_info = {"p08_load_way":"","p05_f_table_filt":"","p07_table_style":"","p08_key_cols":[]}
+
+        # self.job_params_key={"p08_load_way":}
         # self.db_columns_type = {}
         #numberic格式映射
         # NUMERIC(20,2) NUMERIC(12)
@@ -128,9 +136,89 @@ class AotuGenerate:
     '''
         1 解决 贴源sheet 里面表名写错的问题，导致漏了模型
     '''
-    def check_model_name_not_in_inter_categories(self):
-        models_dict = self.all_info
-        inter_categories_dict = self.interface_dic
+    def check_job_params_in_needed(self,job_param_name):
+        jobs_info = self.jobs_info
+        flag=False
+        if job_param_name in jobs_info:
+            # jobs_info.setdefault(job_param_name,job_param_val)
+            # self.jobs_info=jobs_info
+            flag=True
+        return flag
+    # 逗号分隔
+    def get_job_pri_keys(self,param_val):
+        keys_col=[]
+        if param_val :
+            if param_val != 'null' and param_val !='':
+                splits = param_val.replace("，",",").split(",")
+                if len(splits) >0:
+                    # keys_col=splits
+                    for ele in splits:
+                        keys_col.append(ele.strip().lower())
+            else :
+                print('2 param_val 其他情况，不是null,也不是空字符串')
+        else :
+            print('1 param val 第一次判断即不存在')
+
+        return keys_col
+
+
+
+    '''
+        1 读取作业参数信息sheet
+    '''
+    def get_job_config_source(self):
+        filename=self.filename
+        data=xlrd.open_workbook(filename)
+        table = data.sheet_by_name('作业参数登记')
+
+        jobs_info=collections.OrderedDict()
+        cols_dict = {}
+        wrong_table_dict = {}
+        if data.sheet_loaded("作业参数登记"):
+            nrows = table.nrows
+            for index in range(3,nrows):
+                row_value = table.row_values(index)
+                #作业名	作业参数名	参数类型	参数描述	参数值	其他
+                job_name=row_value[0].strip().upper()
+                job_param_name=row_value[1].strip().lower()
+                param_type=row_value[2]
+                param_desc=row_value[3]
+                try :
+                    param_value=row_value[4].strip().lower()
+                except Exception as e:
+                    param_value=row_value[4]
+                flag = self.check_job_params_in_needed(job_param_name)
+                ## 主键的情况 :null,没主键 为空，多个主键，逗号分隔
+                # keys_col=[]
+                if flag :
+                    print(flag)
+                    if job_param_name =='p08_key_cols':
+                        param_value = self.get_job_pri_keys(param_value)
+                        print(f'主键集合 {param_value}')
+
+                else :
+                    print('continue')
+                    continue
+
+                # p08_load_way 加载模式，有就拿下来，没有就置空,需要问具体的意思
+                # p05_f_table_filt 源表过滤条件，原封不动
+                # p07_table_style 表类型 c:当前 s:切片 l:拉链 原封不动保存
+                # p17_view_key 分布键,暂时不管
+                # p08_key_cols 主键字段集合，逗号分隔开，替换成Y,N，原来的不正确
+                # key :作业表名,cols:[],p07_table_style:"",p08_load_way:"",p05_f_table_filt:
+                if job_name :
+                    if job_name not in jobs_info:
+                        # jobs_info.setdefault(job_name,job_name)
+                        jobs_info[job_name]={"job_name":job_name,job_param_name:param_value}
+
+                    else :
+                        jobs_info[job_name].setdefault(job_param_name,param_value)
+                    #
+                    #     print(f'重复的jobname {job_name}')
+                else :
+                    print(f'job_name 为空或者不存在 job_name={job_name}')
+
+        print(jobs_info)
 
     '''
     # 读取配置文件
@@ -152,7 +240,7 @@ class AotuGenerate:
         all_type_set=set()
         cols_dict={}
         wrong_table_dict={}
-        if data.sheet_loaded(0):  # 检查某个sheet是否导入完毕
+        if data.sheet_loaded("接口明细-贴源"):  # 检查某个sheet是否导入完毕
             nrows = table.nrows  # 获取该sheet中的有效行数
             i = 1
             all_info = collections.OrderedDict()
@@ -653,6 +741,8 @@ class AotuGenerate:
         source_type = self.source_flag
         failed_match_model_name=self.failed_match_model_name
         model_name=self.model_name
+        self.get_job_config_source()
+        return
         # 非贴源的表
         if source_type == 'no_source':
             # 读取配置文件
