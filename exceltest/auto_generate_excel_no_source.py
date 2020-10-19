@@ -56,6 +56,7 @@ class AotuGenerate:
     ##表英文名 表中文名 字段英文名 字段中文名 字段类型 是否主键 是否分布键 备注 上线日期
     '''
     def get_interface_index_source(self):
+            global fail_sheets_list
             # 读取配置文件
             basefilename = self.basename
             category_info = self.interface_dic
@@ -115,17 +116,29 @@ class AotuGenerate:
                     if hive_table not in category_info:
                         t_message=(source_name,'',hive_table,t_ch_name,load_rule,update_frequence,data_rule,clean_rule,save_mons,save_days,mark)
                         category_info.setdefault(hive_table,t_message)
+                    else :
+                        print(f'hive table ={hive_table} 重复了,从dict 中踢出去')
+                        e=category_info.pop(hive_table)
+                        fail_sheets_list.setdefault(hive_table,e)
+                        # print(e)
 
             self.interface_dic=category_info
             #print(self.interface_dic)
             print("get_interface_index_source 总共读取excel %d 行，解析到的模型数目为 num=%d 个" %(allrows,len(self.interface_dic)))
+    '''
+        1 解决 贴源sheet 里面表名写错的问题，导致漏了模型
+    '''
+    def check_model_name_not_in_inter_categories(self):
+        models_dict = self.all_info
+        inter_categories_dict = self.interface_dic
 
-
+    '''
     # 读取配置文件
     ##字段序号 字段英文名 字段中文名	字段类型 长度 主键否	空值验证 标准代码编号 分布键	分区键 备注
     ##目录表
     ##贴源表字段，字段都可能为空
     ##表英文名 表中文名 字段英文名 字段中文名 字段类型 是否主键 是否分布键 备注 上线日期
+    '''
     def get_config_file_source(self):
         # 读取配置文件
         filename = self.filename
@@ -201,7 +214,8 @@ class AotuGenerate:
 
 
             self.all_info = all_info
-            print(wrong_table_dict)
+            print(f"data_type 为空的模型数目为 {len(wrong_table_dict)}")
+            # print(f"找到的模型数目为 {len(all_info)}")
             print("****************************** 读取config end*******************")
     '''
         调用 数据项纠正方法处理 数据项的问题，得到新的 data_type值
@@ -378,8 +392,9 @@ class AotuGenerate:
             # print(all_info)
             print("******************** 读取非贴源sheet 信息完成*************")
 
-    # 往 excel 中插入模型和数据项的数据，如果没匹配上的就写一个新的excel
+    # 往 excel 中插入模型和数据项的数据，如果没匹配上的就全部写一个新的excel
     def insert_model_data(self, workbook,worksheet):
+        global fail_sheets_list
         ##目录索引的样式设置
         categroy_style = workbook.add_format()
         categroy_style.set_border(1)
@@ -392,7 +407,7 @@ class AotuGenerate:
         ##拿到所有的贴源表信息，数组
         columns_array=self.all_info
         ## 存放未匹配上的模型 hive_table:'',cols[]
-        fail_sheets_list={}
+        # fail_sheets_list={}
         for hive_table,tuple in iter_info.items():
             #row_values = [hive_table.decode('UTF-8'), table_name, whether, u'事实表', u'公有模型', u'离线']
             row_values=tuple
@@ -406,6 +421,7 @@ class AotuGenerate:
                 # print('截取之后的 sheet_name=%s hive_table=%s' %(sheet_name,hive_table))
 
             try :
+                # if hive_table == ''
                 table_dic=columns_array[hive_table]
                 columns_values = table_dic["columns"]
                 #print("找到一个模型 "+hive_table)
@@ -646,8 +662,8 @@ class AotuGenerate:
             path = os.path.dirname(model_name)
             name = os.path.basename(model_name).split('.')[0]
             model_name=path+"\\"+source_type+'_'+name+'.xlsx'
-
-            print('fail_match_model_name=%s target_model_name=%s' %(failed_match_model_name,model_name))
+            ## python 3.6 之后的做法
+            print(f'fail_match_model_name={failed_match_model_name} target_model_name={model_name}')
             self.get_no_source_config_file()
         else :
             self.get_config_file_source()
@@ -678,6 +694,7 @@ def judge_input_parameters_num():
 if __name__ == '__main__':
     judge_input_parameters_num()
     aotu = AotuGenerate()
+    fail_sheets_list = {}
     # 初始化一个对象，得到col_type
     col_type = get_col_type.colType()
     failed_match_model_name=''
