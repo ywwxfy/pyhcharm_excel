@@ -35,7 +35,10 @@ class AotuGenerate:
         # p07_table_style 表类型 c:当前 s:切片 l:拉链 原封不动保存
         # p17_view_key 分布键,暂时不管
         # p08_key_cols 主键字段集合，逗号分隔开，替换成Y,N，原来的不正确
-        self.jobs_info = {"p08_load_way":"","p05_f_table_filt":"","p07_table_style":"","p08_key_cols":[]}
+        self.job_keys_info = {"p08_load_way":"","p05_f_table_filt":"","p07_table_style":"","p08_key_cols":[]}
+        self.jobs_info = None
+        ## 存放各个模型的主键
+        self.keys_info = None
 
         # self.job_params_key={"p08_load_way":}
         # self.db_columns_type = {}
@@ -68,6 +71,10 @@ class AotuGenerate:
             # 读取配置文件
             basefilename = self.basename
             category_info = self.interface_dic
+            jobs = self.jobs_info
+            ## 存放在作业信息表里面没有登记的信息
+            jobs_not_found_set={}
+            table_keys_col={}
             print("get_interface_index_source 打开"+basefilename)
             data = xlrd.open_workbook(basefilename)
             # 通过索引获取，例如打开第一个sheet表格
@@ -108,7 +115,13 @@ class AotuGenerate:
                     #保存天数
                     save_days = cols[10]
                     #(不使用)依赖贴源作业名
-                    #作业名
+                    #作业名,excel 里面的公式就是大写，不过也有可能是手工拼接的情况
+                    # 还有 #N/A 这种情况，不一定都有
+                    try :
+                        job_name=cols[12].strip().upper()
+                    except Exception as e :
+                        job_name = cols[12]
+                        # print(f" 解析 job_name 报错 {e}")
                     #备注
                     mark=cols[13].strip()
                     #指标
@@ -119,11 +132,33 @@ class AotuGenerate:
                     #变更上线时间 20
                     #分布键
                     forignkey_str=cols[20]
-                    ##最后需要生成的 excel 一级主题 二级主题 实体英文简称	实体中文名 加载策略(追加，覆盖) 更新频率 增全量规则 保存周期类型
+                    ##最后需要生成的 excel 一级主题 二级主题 实体英文简称	实体中文名 加载策略(追加，覆盖) 表类型 卸数条件 更新频率 增全量规则 保存周期类型
                     # 是否保存月底数	数据保存天数	备注
+                    # dict={}
+                    table_type=''
+                    filt_condition=''
+                    key_cols=[]
                     if hive_table not in category_info:
-                        t_message=(source_name,'',hive_table,t_ch_name,load_rule,update_frequence,data_rule,clean_rule,save_mons,save_days,mark)
+                        if job_name in jobs :
+                            table_dict=jobs[job_name]
+                            filt_condition =table_dict['p05_f_table_filt']
+                            if filt_condition == 'null':
+                                filt_condition=''
+                            table_type=table_dict['p07_table_style']
+                            load_rule=table_dict.get('p08_load_way')
+                            if load_rule == None or load_rule =='null':
+                                load_rule=''
+                            key_cols=table_dict.get('p08_key_cols')
+                            t_message=(source_name,'',hive_table,t_ch_name,load_rule,table_type,filt_condition,update_frequence,data_rule,clean_rule,save_mons,save_days,mark)
+                        else :
+                            # jobs_not_found_set.add(hive_table)
+                            jobs_not_found_set.setdefault(hive_table,job_name)
+                            t_message=(source_name,'',hive_table,t_ch_name,load_rule,table_type,filt_condition,update_frequence,data_rule,clean_rule,save_mons,save_days,mark+"_未知作业")
+
                         category_info.setdefault(hive_table,t_message)
+                        table_keys_col.setdefault(hive_table,key_cols)
+
+
                     else :
                         print(f'hive table ={hive_table} 重复了,从dict 中踢出去')
                         e=category_info.pop(hive_table)
@@ -131,15 +166,17 @@ class AotuGenerate:
                         # print(e)
 
             self.interface_dic=category_info
-            #print(self.interface_dic)
+            self.keys_info=table_keys_col
+            print(self.interface_dic)
+            print(f'未找到作业信息的表去重后有 num={len(jobs_not_found_set)}个,详细信息 {jobs_not_found_set}')
             print("get_interface_index_source 总共读取excel %d 行，解析到的模型数目为 num=%d 个" %(allrows,len(self.interface_dic)))
     '''
         1 解决 贴源sheet 里面表名写错的问题，导致漏了模型
     '''
     def check_job_params_in_needed(self,job_param_name):
-        jobs_info = self.jobs_info
+        job_keys_info = self.job_keys_info
         flag=False
-        if job_param_name in jobs_info:
+        if job_param_name in job_keys_info:
             # jobs_info.setdefault(job_param_name,job_param_val)
             # self.jobs_info=jobs_info
             flag=True
@@ -155,7 +192,7 @@ class AotuGenerate:
                     for ele in splits:
                         keys_col.append(ele.strip().lower())
             else :
-                print('2 param_val 其他情况，不是null,也不是空字符串')
+                print(f'2 param_val={param_val} 其他情况，不是null,也不是空字符串')
         else :
             print('1 param val 第一次判断即不存在')
 
@@ -191,10 +228,10 @@ class AotuGenerate:
                 ## 主键的情况 :null,没主键 为空，多个主键，逗号分隔
                 # keys_col=[]
                 if flag :
-                    print(flag)
+                    # print(flag)
                     if job_param_name =='p08_key_cols':
                         param_value = self.get_job_pri_keys(param_value)
-                        print(f'主键集合 {param_value}')
+                        print(f'主键集合 ={param_value}')
 
                 else :
                     print('continue')
@@ -218,6 +255,7 @@ class AotuGenerate:
                 else :
                     print(f'job_name 为空或者不存在 job_name={job_name}')
 
+        self.jobs_info=jobs_info
         print(jobs_info)
 
     '''
@@ -237,6 +275,9 @@ class AotuGenerate:
         ##那个内容都是5行，每次相当于从下标为6开始
         row_index = 1
         ## 用于存放各数据项 的set集合和 映射字典
+        job_info = self.jobs_info
+        table_keys_arr=self.keys_info
+
         all_type_set=set()
         cols_dict={}
         wrong_table_dict={}
@@ -273,8 +314,14 @@ class AotuGenerate:
                 #     continue
                 new_data_type = self.data_type_process(all_type_set, cols_dict, data_type)
 
-                #print(ch_name)
-                pkey = row_vaule[5].strip()
+                #默认的 主键都为N，这个文档的不准
+                # pkey = row_vaule[5].strip()
+                pkey='N'
+                if hive_table in table_keys_arr:
+                    table_keys = table_keys_arr[hive_table]
+                    if en_name in table_keys :
+                        pkey='Y'
+
                 distribute = row_vaule[6].strip()
                 mark = row_vaule[7]
                 create_day = row_vaule[8]
@@ -341,7 +388,7 @@ class AotuGenerate:
         1 读取 接口明细-非贴源 的sheet 页
         特点 ： 第一行为空行
         2 目前只有模型中英文名称和字段，没有原系统来源，需要行方手工梳理，有150多个这样的模型
-        3 
+        3 根据hive_table 去匹配作业名称 'GP_ACA_NCRMP_ZB_'+hive_table+'_DAY'/'_EOM'
     '''
 
     def get_no_source_config_file(self):
@@ -359,8 +406,10 @@ class AotuGenerate:
         all_type_set=set()
         cols_dict={}
         wrong_table_dict={}
+        jobs_info = self.jobs_info
+        jobs_not_found_set={}
 
-        if data.sheet_loaded(0):  # 检查某个sheet是否导入完毕
+        if data.sheet_loaded('接口明细-非贴源'):  # 检查某个sheet是否导入完毕
             nrows = table.nrows  # 获取该sheet中的有效行数
             i = 1
             all_info = collections.OrderedDict()
@@ -371,6 +420,9 @@ class AotuGenerate:
                 #hive_db = row_vaule[0].strip().lower()
                 try :
                     hive_table = row_vaule[0].strip().lower()
+                    job_name = 'GP_ACA_NCRMP_ZB_' + hive_table.upper() + '_EOM'
+                    job_name2 = 'GP_ACA_NCRMP_ZB_' + hive_table.upper() + '_DAY'
+
                 except :
                     # print('exception hive_table ='+str(row_vaule[0]))
                     hive_table=row_values[0]
@@ -396,7 +448,20 @@ class AotuGenerate:
                     # print("跳过第"+str(row_num))
                     continue
 
-                pkey = row_vaule[2].strip().lower().replace('yes','Y').replace('no','N')
+                # pkey = row_vaule[2].strip().lower().replace('yes','Y').replace('no','N')
+
+                # t_message = (source_name, '', hive_table, t_ch_name, load_rule, table_type, filt_condition, update_frequence,
+                # data_rule, clean_rule, save_mons, save_days, mark)
+                else:
+                # jobs_not_found_set.add(hive_table)
+                    jobs_not_found_set.setdefault(hive_table, job_name)
+                    mark_flag="未知作业_"
+                # t_message = (source_name, '', hive_table, t_ch_name, load_rule, table_type, filt_condition, update_frequence,
+                # data_rule, clean_rule, save_mons, save_days, mark + "_未知作业")
+
+                    # category_info.setdefault(hive_table, t_message)
+                    # table_keys_col.setdefault(hive_table, key_cols)
+
                 fkey = row_vaule[3].strip()
                 empty = row_vaule[4]
                 #en_name = re.sub("\s", "",table_name)
@@ -405,7 +470,41 @@ class AotuGenerate:
                 distribute = row_vaule[7].strip().lower().replace('pi','Y')
                 empty2 = row_vaule[8].strip()
                 old_data_type = row_vaule[9].strip().lower()
-                # if hive_table in wrong_model_dict :
+                ## 解决主键问题，如果有主键，就用Y表示
+                pkey = 'N'
+
+                if job_name in jobs_info:
+                    table_dict = jobs_info[job_name]
+                elif job_name2 in jobs_info:
+                    table_dict = jobs_info[job_name2]
+                else:
+                    table_dict = ''
+                    if hive_table not in jobs_not_found_set:
+                        jobs_not_found_set.setdefault(hive_table,job_name)
+                        print(f'非贴源 模型在作业表中未找到 hive_table={hive_table}')
+                # table_dict = job_keys[job_name]
+                ## 提供默认值
+                key_cols = []
+                filt_condition = ''
+                table_type = ''
+                load_rule = ''
+                mark_flag = ''
+                if table_dict:
+                    filt_condition = table_dict['p05_f_table_filt']
+                    if filt_condition == 'null':
+                        filt_condition = ''
+                    table_type = table_dict['p07_table_style']
+                    load_rule = table_dict.get('p08_load_way')
+                    if load_rule == None or load_rule == 'null':
+                        load_rule = ''
+                    key_cols = table_dict.get('p08_key_cols')
+                    if key_cols:
+                        if en_name in key_cols:
+                            print(f'*********************************非贴源 {en_name} is pkey')
+                            pkey='Y'
+
+
+                    # if hive_table in wrong_model_dict :
                 #     # print("这张表有问题 hive_table=%s 跳过" %hive_table)
                 #     continue
                 # if not old_data_type or old_data_type=='()' or old_data_type=='none' :
@@ -439,11 +538,11 @@ class AotuGenerate:
                 # index = row_vaule[14].strip()
                 # create_day = row_vaule[15]
 
-                ##最后需要生成的 excel 一级主题 二级主题 实体英文简称	实体中文名 加载策略(追加，覆盖) 更新频率 增全量规则 保存周期类型
-                # 是否保存月底数	数据保存天数	备注
+                ##最后需要生成的 excel 一级主题 二级主题 实体英文简称	实体中文名 加载策略(追加，覆盖),表类型，卸数条件, 更新频率
+                # 增全量规则 保存周期类型 是否保存月底数	数据保存天数	备注
                 # t_message = (source_name, '', hive_table, t_ch_name, load_rule, update_frequence, data_rule, clean_rule, save_mons,
                 if hive_table not in category_dict:
-                    t_message = ('', '', hive_table, t_ch_name, '', '', '', '', '','', mark)
+                    t_message = ('', '', hive_table, t_ch_name, load_rule, table_type,filt_condition,'', '', '', '','', mark_flag+mark)
                     category_dict.setdefault(hive_table, t_message)
 
                 #  col_tuple = (en_name, ch_name, new_data_type, '', pkey, '', '', distribute, '', mark)
@@ -474,11 +573,31 @@ class AotuGenerate:
 
             self.all_info = all_info
             self.interface_dic=category_dict
-            print("接口目录的模型个数=%d" %len(category_dict))
-            print("接口模型 数据项 data_type 为空的模型个数=%d" %len(wrong_model_dict))
-            print(wrong_model_dict)
+            print("非贴源接口目录的模型个数=%d" %len(category_dict))
+            print("非贴源 接口模型 数据项 data_type 为空的模型个数=%d" %len(wrong_model_dict))
+            # print(wrong_model_dict)
             # print(all_info)
+            print(jobs_not_found_set)
             print("******************** 读取非贴源sheet 信息完成*************")
+    '''
+        1 遍历接口信息-贴源中的模型和数据项，找到在接口目录中不存在的模型
+    '''
+    def check_models_not_in_categories(self):
+
+        ##拿到所有的贴源表信息，数组
+        columns_array = self.all_info
+        category_dict = self.interface_dic
+        ## 存放未匹配上的模型 hive_table:'',cols[]
+        model_not_find={}
+        # columns_no_found_dict={}
+        for hive_table, tuple in columns_array.items():
+            if hive_table not in category_dict:
+                if hive_table not in model_not_find:
+                    model_not_find.setdefault(hive_table,[tuple])
+                else :
+                    model_not_find[hive_table].append(tuple)
+        print(f'接口信息-贴源中的模型存在但接口目录找不到的模型数目 num={len(model_not_find)}')
+        return model_not_find
 
     # 往 excel 中插入模型和数据项的数据，如果没匹配上的就全部写一个新的excel
     def insert_model_data(self, workbook,worksheet):
@@ -583,7 +702,7 @@ class AotuGenerate:
         fail_len=len(fail_sheets_list)
         if fail_len >0:
             fail_sequence = 2
-            headings = ['一级主题', '二级主题', '实体英文简称', '实体中文名', '加载策略', '更新频率', '增全量规则', '保存周期类型',
+            headings = ['一级主题', '二级主题', '实体英文简称', '实体中文名', '加载策略','表类型','卸数条件', '更新频率', '增全量规则', '保存周期类型',
                         '是否保存月底数', '数据保存天数', '备注']
             fail_sheet, wb = self.create_fail_model_excel_xlsx(failed_match_model_name, "模型目录", headings)
             for table,rowValue in fail_sheets_list.items():
@@ -692,8 +811,11 @@ class AotuGenerate:
         worksheet.set_row(0,22)
         worksheet.set_column('A:A', 20)
         worksheet.set_column('B:C', 15)
-        worksheet.set_column('C:D', 30)
-        worksheet.set_column('E:K', 8.88)
+        worksheet.set_column('C:C', 30)
+        worksheet.set_column('D:D', 20)
+        worksheet.set_column('E:F', 8.88)
+        worksheet.set_column('G:G', 20)
+        worksheet.set_column('H:M', 8.88)
         # 定义一个格式
         style = workbook.add_format()
         style.set_border(1)
@@ -702,8 +824,8 @@ class AotuGenerate:
         style.set_bold(True)
         style.set_font("等线")
         #style.set_font_size(12)
-        # 设置表头
-        headings = ['一级主题', '二级主题', '实体英文简称', '实体中文名', '加载策略', '更新频率', '增全量规则', '保存周期类型',
+        # 设置表头 表类型 卸数条件
+        headings = ['一级主题', '二级主题', '实体英文简称', '实体中文名', '加载策略','表类型','卸数条件', '更新频率', '增全量规则', '保存周期类型',
                     '是否保存月底数', '数据保存天数', '备注']
         # 横向写入数据
 
@@ -742,7 +864,7 @@ class AotuGenerate:
         failed_match_model_name=self.failed_match_model_name
         model_name=self.model_name
         self.get_job_config_source()
-        return
+        # return
         # 非贴源的表
         if source_type == 'no_source':
             # 读取配置文件
@@ -756,9 +878,10 @@ class AotuGenerate:
             print(f'fail_match_model_name={failed_match_model_name} target_model_name={model_name}')
             self.get_no_source_config_file()
         else :
-            self.get_config_file_source()
             ##读取接口目录的配置文件
             self.get_interface_index_source()
+            self.get_config_file_source()
+            # return
 
         # 生成模板excel
         self.create_model_excel_xlsx(model_name)
