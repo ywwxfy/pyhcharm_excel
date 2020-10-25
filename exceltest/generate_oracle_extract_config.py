@@ -8,7 +8,7 @@ import traceback
 import getopt
 import random
 import re
-import pymysql
+# import pymysql
 import sys
 sys.path.append("/data02/dcadmin/scripts/common")
 # from connect_postgresql import postgresql_connect
@@ -154,7 +154,7 @@ and b.schedule_id=c.schedule_id and job_name not in ('INT_EVT_CRM_P_CRM_FOR_SA_B
 	##partitions
 	#get_partition_info()
 	print("----------------------------------------get col")
-	get_column_info()
+	# get_column_info()
 	print("-----------------------------------------insert final")
 	insert_final_data()
 
